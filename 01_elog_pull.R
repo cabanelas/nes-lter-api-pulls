@@ -75,8 +75,8 @@ read_event_cruise <- function(cruise_id) {
 # Read and combine all cruises
 cruise_dat <- lapply(cruise_ids, read_event_cruise)
 failed     <- cruise_ids[sapply(cruise_dat, is.null)]
-print(cruise_ids[which(sapply(cruise_dat, is.null))])
 
+print(cruise_ids[which(sapply(cruise_dat, is.null))])
 if (length(failed) > 0) message("Failed cruises: ", 
                                 paste(failed, collapse = ", "))
 
@@ -171,12 +171,6 @@ zoop_tows <- zoop_tows |>
       (\(x) ifelse(!is.na(x) & str_detect(Instrument, "Ring") &
                      !str_starts(x, "R") & !str_starts(x, "B"),
                    paste0("R", x), x))() |>
-      # Add "B" for Bongo Nets
-      # (\(x) ifelse(!is.na(x) & str_detect(Instrument, "Bongo") &
-      #                !str_starts(x, "B"), paste0("B", x), x))() |>
-      # # Add "R" for Ring Nets
-      # (\(x) ifelse(!is.na(x) & str_detect(Instrument, "Ring") &
-      #                !str_starts(x, "R"), paste0("R", x), x))() |>
       # Remove leading zeros after B or R (B01 -> B1)
       str_replace("^(B|R)0*([1-9]\\d*)[a-zA-Z]*$", "\\1\\2") |>
       # Fix typo BL16 -> B16
@@ -410,7 +404,7 @@ cat("remaining NA longitude:", sum(is.na(zoop_tows$longitude)), "\n")
 # this is not in the bongo meta file (L1 B44 is)
 
 ## ------------------------------------------ ##
-#   6. Add date columns
+#   7. Add date columns
 ## ------------------------------------------ ##
 
 zoop_tows <- zoop_tows |>
@@ -423,7 +417,7 @@ zoop_tows <- zoop_tows |>
   ) 
 
 ## ------------------------------------------ ##
-#   7. Quick checks
+#   Quick checks
 ## ------------------------------------------ ##
 cat("Cruises in output:\n"); print(unique(zoop_tows$cruise))
 cat("Instruments:\n");       print(unique(zoop_tows$instrument))

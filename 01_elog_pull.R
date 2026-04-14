@@ -14,6 +14,9 @@
 ##    https://www.rvdata.us/
 ##    https://github.com/WHOIGit/nes-lter-ims/wiki/Using-REST-API-to-access-NES-LTER-data
 ##
+## Inputs (data/raw/):
+##   - nes-lter-zooplankton-tow-metadata-v2.csv (EDI inventory knb-lter-nes.24.2)
+##    https://portal.edirepository.org/nis/mapbrowse?packageid=knb-lter-nes.24.2
 ## Outputs (data/raw/):
 ##   - elog_zoop_tows_[datecreated].csv
 ################################################################################
@@ -85,17 +88,18 @@ walk(failed, function(cruise_id) {
 # 404 = cruise exists in the system but no event log
 
 succeeded <- cruise_ids[!sapply(cruise_dat, is.null)]
-message("Succeeded (", length(succeeded), "): ", paste(succeeded, collapse = ", "))
+message("Succeeded (", length(succeeded), "): ", 
+        paste(succeeded, collapse = ", "))
 
 combined_data <- bind_rows(Filter(Negate(is.null), cruise_dat)) 
 
-message("Most recent cruise in API: ", cruises_df$name[which.max(as.Date(cruises_df$start_time))])
+message("Most recent cruise in API: ", 
+        cruises_df$name[which.max(as.Date(cruises_df$start_time))])
 
 ## ------------------------------------------ ##
 #   3. Manually downloaded R2R elogs
 ## ------------------------------------------ ##
 # for cruises not in API: AR66B
-## ring net only: AR61B, AR66B, AR28B, AR31A, AR34B, AR39B
 
 read_r2r <- function(filename, cruise_id) {
   desired <- c("Message ID", "dateTime8601", "Instrument",
@@ -116,11 +120,11 @@ r2r_manual <- bind_rows(
   # read_r2r("R2R_ELOG_en720.csv", "EN720")
 )
 
+# names(combined_data); names(r2r_manual)
+combined_data <- bind_rows(combined_data, r2r_manual) 
 # should be TRUE
 n_distinct(combined_data$cruise) == length(succeeded) + n_distinct(r2r_manual$cruise)
 
-# names(combined_data); names(r2r_manual)
-combined_data <- bind_rows(combined_data, r2r_manual) 
 rm(r2r_manual)
 
 unique(combined_data$cruise)
@@ -157,12 +161,22 @@ zoop_tows <- zoop_tows |>
                      x != "MVCO" & !is.na(x), paste0("L", x), x))() |>
       str_replace("^L0+(\\d+)$", "L\\1"), # Remove leading zeros
     Cast = Cast |>
-      # Add "B" for Bongo Nets
+      # For Bongo Net: ensure starts with B
       (\(x) ifelse(!is.na(x) & str_detect(Instrument, "Bongo") &
                      !str_starts(x, "B"), paste0("B", x), x))() |>
-      # Add "R" for Ring Nets
+      # For Ring Net: replace B prefix with R (handles AR99 case)
       (\(x) ifelse(!is.na(x) & str_detect(Instrument, "Ring") &
-                     !str_starts(x, "R"), paste0("R", x), x))() |>
+                     str_starts(x, "B"), paste0("R", str_sub(x, 2)), x))() |>
+      # For Ring Net: add R if no prefix at all
+      (\(x) ifelse(!is.na(x) & str_detect(Instrument, "Ring") &
+                     !str_starts(x, "R") & !str_starts(x, "B"),
+                   paste0("R", x), x))() |>
+      # Add "B" for Bongo Nets
+      # (\(x) ifelse(!is.na(x) & str_detect(Instrument, "Bongo") &
+      #                !str_starts(x, "B"), paste0("B", x), x))() |>
+      # # Add "R" for Ring Nets
+      # (\(x) ifelse(!is.na(x) & str_detect(Instrument, "Ring") &
+      #                !str_starts(x, "R"), paste0("R", x), x))() |>
       # Remove leading zeros after B or R (B01 -> B1)
       str_replace("^(B|R)0*([1-9]\\d*)[a-zA-Z]*$", "\\1\\2") |>
       # Fix typo BL16 -> B16
@@ -197,21 +211,219 @@ zoop_tows |>
 #EN685 (this was URI cruise summer 2022; 35 ring net casts) 
 
 ## ------------------------------------------ ##
-#   5. Add date columns
+#   5. FIX elog entry errors 
+## ------------------------------------------ ##
+zoop_tows <- zoop_tows |> clean_names() |> rename(datetime8601 = date_time8601)
+
+# print duplicate entries
+zoop_tows |>
+  filter(action %in% c("deploy", "recover")) |>
+  count(cruise, station, cast, action) |>
+  filter(n > 1) 
+
+## --- handling duplicate entries ---
+# --- fix actions ---
+zoop_tows <- zoop_tows |>
+  mutate(action = case_when(
+    # AR34B L11 R10 = second entry (2019-04-18 06:14:00) is a recover, not deploy
+    cruise == "AR34B" & station == "L11" & cast == "R10" &
+    action == "deploy" &
+    datetime8601 == max(datetime8601[cruise == "AR34B" &
+                                     station == "L11" &
+                                     cast == "R10"]) ~ "recover",
+    # AR77 L2 B2 — first deploy was aborted; change earlier deploy to abort
+    cruise == "AR77" & station == "L2" & cast == "B2" &
+    action == "deploy" &
+    datetime8601 == min(datetime8601[cruise == "AR77" &
+                                     station == "L2" &
+                                     cast == "B2" &
+                                     action == "deploy"]) ~ "abort",
+    # EN617 flowmeter calibrations: change Action to other via message_id
+    # L11     B25 = flowmeter calibation
+    # MVCO    B35 = flowmeter calibation == 2018-07-25 02:10:18
+    cruise == "EN617" & station == "L11" & cast == "B25" ~ "other",
+    cruise == "EN617" & station == "MVCO" & cast == "B35" ~ "other",
+    # EN627 L9 cast NA; tow stopped; block malfunction 
+    cruise == "EN627" & station == "L9" & is.na(cast) ~ "other",
+    # EN685 cast R1 station NA == was a test
+    cruise == "EN685" & is.na(station) & cast == "R1" ~ "other",
+    TRUE ~ action
+  ))
+
+# --- remove rows ---
+## 13 rows should be deleted
+zoop_tows <- zoop_tows |>
+  filter(
+    # AR31A L6 R1 has 2 deploy; remove 1 ; remove the later one (keep earlier one)
+    # the second one was really close in timestamp
+    !(cruise == "AR31A" & station == "L6" & cast == "R1" &
+      action == "deploy" &
+      datetime8601 == max(datetime8601[cruise == "AR31A" &
+                                       station == "L6" &
+                                       cast == "R1" &
+                                       action == "deploy"])),
+    # EN644 L9 B12 — all failed (2x hit bottom) 
+    # L9 B18 was the successful one (3rd try) = 2019-08-23 16:15:02 
+    !(cruise == "EN644" & station == "L9" & cast == "B12"),
+    # EN627 L2 — cast NA, nets hit bottom, no sample
+    !(cruise == "EN627" & station == "L2" & is.na(cast)),
+    # EN655 L9 B15 — hit bottom, no sample, remove deploy and recover
+    !(cruise == "EN655" & station == "L9" & cast == "B15"),
+    # EN712 L6 B5 — no sample
+    !(cruise == "EN712" & station == "L6" & cast == "B5"),
+    # empty entry? i think this may be a typo; no missing stations this cruise
+    !(cruise == "AR38" & is.na(station) & is.na(cast)),
+    # remove == cast == Test 
+    !(cast == "Test" & !is.na(cast))
+  )
+
+## check NAs
+walk(c("instrument", "action", "station", "cast"), function(col) {
+  rows <- zoop_tows |> filter(is.na(.data[[col]]))
+  if (nrow(rows) > 0) {
+    cat("\n--- NA in", col, "---\n")
+    print(rows |> select(cruise, station, cast, action, instrument, datetime8601))
+  }
+}) #ideally if any NAs, the action == "other" 
+
+## ------------------------------------------ ##
+#   6. Patch coordinates and timestamps from meta
+## ------------------------------------------ ##
+## --- EDI zooplankton inventory package --- 
+# knb-lter-nes.24.2
+# https://portal.edirepository.org/nis/mapbrowse?packageid=knb-lter-nes.24.2
+meta <- read_csv(file.path("data",
+                           "raw",
+                           "nes-lter-zooplankton-tow-metadata-v2.csv"))
+
+meta_patch <- meta |>
+  mutate(cast = paste0("B", cast)) |>
+  select(cruise, station, cast, latitude_start, longitude_start,
+         latitude_end, longitude_end, datetime_UTC_start, datetime_UTC_end)
+
+## --- check if any duplicates (should return 0) ---
+zoop_tows |>
+  filter(action %in% c("deploy", "recover")) |>
+  count(cruise, station, cast, action) |>
+  filter(n > 1) |>
+  distinct(cruise, station, cast)
+
+cat("NA latitude: ",  sum(is.na(zoop_tows$latitude)),  "\n")
+cat("NA longitude:", sum(is.na(zoop_tows$longitude)), "\n")
+cat("NA datetime8601:", sum(is.na(zoop_tows$datetime8601)), "\n")
+
+## --- discrepancies between coordinates in meta and elog ---
+zoop_tows |>
+  left_join(meta_patch, by = c("cruise", "station", "cast")) |>
+  filter(action %in% c("deploy", "recover")) |>
+  mutate(
+    meta_lat = if_else(action == "deploy", latitude_start,  latitude_end),
+    meta_lon = if_else(action == "deploy", longitude_start, longitude_end)
+  ) |>
+  filter(!is.na(meta_lat)) |>
+  filter(abs(round(latitude,  2) - round(meta_lat, 2)) > 0.02 |
+           abs(round(longitude, 2) - round(meta_lon, 2)) > 0.02) |>
+  select(cruise, station, cast, action,
+         latitude, meta_lat,
+         longitude, meta_lon) |>
+  arrange(cruise, station, cast)
+## AR38 had issues with the GPS; need to fix 
+
+## --- fix AR38 L6 coordinates ---
+# these are also wrong in the meta doc
+# patching using the CTD coordinates in the elog
+ar38_l6 <- combined_data |>
+  filter(cruise == "AR38", Station == "L6", Cast == "8",
+         Instrument == "CTD911", Action == "deploy") 
+
+zoop_tows <- zoop_tows |>
+  mutate(
+    latitude  = if_else(cruise == "AR38" & station == "L6" & cast == "B8",
+                        ar38_l6$Latitude,  latitude),
+    longitude = if_else(cruise == "AR38" & station == "L6" & cast == "B8",
+                        ar38_l6$Longitude, longitude)
+  )
+
+## --- fix AR34B L10 coordinates ---
+ar34b_l10 <- combined_data |>
+  filter(cruise == "AR34B", Cast == "21",
+         Instrument == "CTD911", Action == "recover") |>
+  slice(1)
+
+zoop_tows <- zoop_tows |>
+  mutate(
+    latitude  = if_else(cruise == "AR34B" & station == "L10",
+                        ar34b_l10$Latitude,  latitude),
+    longitude = if_else(cruise == "AR34B" & station == "L10",
+                        ar34b_l10$Longitude, longitude)
+  )
+
+## --- discrepancies between timestamps in meta and elog ---
+zoop_tows |>
+  left_join(meta_patch, by = c("cruise", "station", "cast")) |>
+  filter(action %in% c("deploy", "recover")) |>
+  mutate(
+    meta_dt   = if_else(action == "deploy", datetime_UTC_start, datetime_UTC_end),
+    diff_mins = as.numeric(difftime(datetime8601, meta_dt, units = "mins"))
+  ) |>
+  filter(!is.na(meta_dt)) |>
+  filter(abs(diff_mins) > 2) |>
+  select(cruise, station, cast, action,
+         datetime8601, meta_dt, diff_mins) |>
+  arrange(cruise, station, cast)
+
+## --- fill missing coordinates and fix timestamps --- 
+zoop_tows <- zoop_tows |>
+  left_join(meta_patch, by = c("cruise", "station", "cast")) |>
+  mutate(
+    # fill missing coordinates from meta (deploy -> start, recover -> end)
+    latitude = case_when(
+      is.na(latitude) & action == "deploy"  & !is.na(latitude_start)  ~ latitude_start,
+      is.na(latitude) & action == "recover" & !is.na(latitude_end)    ~ latitude_end,
+      TRUE ~ latitude
+    ),
+    longitude = case_when(
+      is.na(longitude) & action == "deploy"  & !is.na(longitude_start) ~ longitude_start,
+      is.na(longitude) & action == "recover" & !is.na(longitude_end)   ~ longitude_end,
+      TRUE ~ longitude
+    ),
+    # fix timestamps where mismatch > 2 mins
+    datetime8601 = case_when(
+      action == "deploy"  & !is.na(datetime_UTC_start) &
+        abs(as.numeric(difftime(datetime8601, datetime_UTC_start,
+                                units = "mins"))) > 2 ~ datetime_UTC_start,
+      action == "recover" & !is.na(datetime_UTC_end) &
+        abs(as.numeric(difftime(datetime8601, datetime_UTC_end,
+                                units = "mins"))) > 2 ~ datetime_UTC_end,
+      TRUE ~ datetime8601
+    )
+  ) |>
+  select(-latitude_start, -longitude_start,
+         -latitude_end, -longitude_end,
+         -datetime_UTC_start, -datetime_UTC_end)
+
+# quick check 
+cat("remaining NA latitude: ",  sum(is.na(zoop_tows$latitude)),  "\n")
+cat("remaining NA longitude:", sum(is.na(zoop_tows$longitude)), "\n")
+# EN627 L1 B3 = this one is a strange sample; they hit bottom; no bongo sample
+# kept but they kept the size fraction samples from the ring net 
+# this is not in the bongo meta file (L1 B44 is)
+
+## ------------------------------------------ ##
+#   6. Add date columns
 ## ------------------------------------------ ##
 
 zoop_tows <- zoop_tows |>
   mutate(
-    date  = as.Date(dateTime8601),
-    year  = year(dateTime8601),
-    month = month(dateTime8601),
-    day   = day(dateTime8601),
-    time  = format(dateTime8601, "%H:%M:%S")
-  ) |>
-  clean_names()
+    date  = as.Date(datetime8601),
+    year  = year(datetime8601),
+    month = month(datetime8601),
+    day   = day(datetime8601),
+    time  = format(datetime8601, "%H:%M:%S")
+  ) 
 
 ## ------------------------------------------ ##
-#   6. Quick checks
+#   7. Quick checks
 ## ------------------------------------------ ##
 cat("Cruises in output:\n"); print(unique(zoop_tows$cruise))
 cat("Instruments:\n");       print(unique(zoop_tows$instrument))
@@ -222,14 +434,22 @@ cat("Rows: ", nrow(zoop_tows), "\n")
   borders("world", fill = "gray85", color = "white") +
   geom_point(aes(color = cruise), size = 1.5, alpha = 0.7, show.legend = FALSE) +
   coord_quickmap(xlim = c(-85, -55), ylim = c(30, 55)) +
-  theme_bw() +
-  labs(title = "all cruises")
+  theme_bw() 
 )
 
 m1 + coord_quickmap(xlim = c(-73, -69), ylim = c(38.5, 43))
 
 ## ------------------------------------------ ##
-#   7. Save
+#   Save
 ## ------------------------------------------ ##
+most_recent <- zoop_tows |>
+  arrange(desc(datetime8601)) |>
+  slice(1) |>
+  pull(cruise)
+
 write_csv(zoop_tows, here("data", "processed",
-                          paste0("elog_zoop_tows_", Sys.Date(), ".csv")))
+                          paste0("elog_zoop_tows_thru", most_recent, 
+                                 "_", Sys.Date(), ".csv")))
+
+# write_csv(zoop_tows, here("data", "processed",
+#                           paste0("elog_zoop_tows_", Sys.Date(), ".csv")))

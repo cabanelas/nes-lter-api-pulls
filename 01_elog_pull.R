@@ -236,7 +236,8 @@ zoop_tows <- zoop_tows |>
     # L11     B25 = flowmeter calibation
     # MVCO    B35 = flowmeter calibation == 2018-07-25 02:10:18
     cruise == "EN617" & station == "L11" & cast == "B25" ~ "other",
-    cruise == "EN617" & station == "MVCO" & cast == "B35" ~ "other",
+    cruise == "EN617" & station == "MVCO" & cast == "B35" &
+    datetime8601 == as.POSIXct("2018-07-25 02:10:18", tz = "UTC") ~ "other",
     # EN627 L9 cast NA; tow stopped; block malfunction 
     cruise == "EN627" & station == "L9" & is.na(cast) ~ "other",
     # EN685 cast R1 station NA == was a test
@@ -351,6 +352,7 @@ zoop_tows <- zoop_tows |>
     longitude = if_else(cruise == "AR34B" & station == "L10",
                         ar34b_l10$Longitude, longitude)
   )
+## cant fix EN627 L1 B3 coordinates - GPS not working ? ---
 
 ## --- discrepancies between timestamps in meta and elog ---
 zoop_tows |>
@@ -401,7 +403,8 @@ cat("remaining NA latitude: ",  sum(is.na(zoop_tows$latitude)),  "\n")
 cat("remaining NA longitude:", sum(is.na(zoop_tows$longitude)), "\n")
 # EN627 L1 B3 = this one is a strange sample; they hit bottom; no bongo sample
 # kept but they kept the size fraction samples from the ring net 
-# this is not in the bongo meta file (L1 B44 is)
+# this is not in the bongo meta file (L1 B44 is); this one has SIA samples
+# cant fix coordinates; CTD cast doesnt have lat/lon either
 
 ## ------------------------------------------ ##
 #   7. Add date columns

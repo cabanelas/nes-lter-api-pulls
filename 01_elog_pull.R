@@ -5,6 +5,8 @@
 ## Purpose: Pull bongo/ring net event logs from NES-LTER API v2
 ##          and combine with manually downloaded R2R elogs
 ##
+##   Last time saved up to cruise HRS2601 (spring 2026)
+##
 ## API2 (new):
 ##    https://github.com/WHOIGit/nes-lter-api-2/wiki
 ##    https://nes-lter-api.whoi.edu/api/docs#/
@@ -17,6 +19,12 @@
 ## Inputs (data/raw/):
 ##   - nes-lter-zooplankton-tow-metadata-v2.csv (EDI inventory knb-lter-nes.24.2)
 ##    https://portal.edirepository.org/nis/mapbrowse?packageid=knb-lter-nes.24.2
+##
+##   - nes-lter-bongologs-AR99-20260810.csv
+##      from nes-lter-tow-meta-v3.Rproj; 01_merge_bongo_logs.R
+##
+##   - nes-lter-bongo-tdr.csv         from nes-lter-tdr-bongo.Rproj
+##
 ## Outputs (data/raw/):
 ##   - elog_zoop_tows_[datecreated].csv
 ################################################################################
@@ -406,8 +414,124 @@ cat("remaining NA longitude:", sum(is.na(zoop_tows$longitude)), "\n")
 # this is not in the bongo meta file (L1 B44 is); this one has SIA samples
 # cant fix coordinates; CTD cast doesnt have lat/lon either
 
+# --- final manual timestamp overrides (authoritative; after meta-patch) ---
+zoop_tows <- zoop_tows |>
+  mutate(datetime8601 = case_when(
+    cruise=="AR28B"   & station=="L1"   & cast=="R1"  & 
+      action=="deploy"  ~ as.POSIXct("2018-04-03 20:52:00", tz="UTC"),
+    cruise=="AR31A"   & station=="L6"   & cast=="R1"  & 
+      action=="recover" ~ as.POSIXct("2018-10-21 08:56:00", tz="UTC"),
+    cruise=="EN617"   & station=="L3"   & cast=="B5"  & 
+      action=="deploy"  ~ as.POSIXct("2018-07-21 07:34:00", tz="UTC"),
+    cruise=="EN617"   & station=="MVCO" & cast=="B35" & 
+      action=="deploy"  ~ as.POSIXct("2018-07-25 01:41:00", tz="UTC"),
+    cruise=="AR92"    & station=="MVCO" & cast=="B26" & 
+      action=="deploy"  ~ as.POSIXct("2025-08-19 08:53:00", tz="UTC"),
+    cruise=="HRS2303" & station=="L9"   & cast=="B6"  & 
+      action=="recover" ~ as.POSIXct("2023-05-03 14:36:00", tz="UTC"),
+    # EN706 L10 B10 deploy -> 00:45 (elog & logsheet both wrong)
+    cruise=="EN706"   & station=="L10"  & cast=="B10" & 
+      action=="deploy"  ~ as.POSIXct("2023-08-10 00:45:00", tz="UTC"),
+    # EN706 L8 B15 recover -> 01:00
+    cruise=="EN706"   & station=="L8"   & cast=="B15" & 
+      action=="recover" ~ as.POSIXct("2023-08-11 01:00:00", tz="UTC"),
+    TRUE ~ datetime8601
+  ))
+
 ## ------------------------------------------ ##
-#   7. Add date columns
+#   7. Check newer cruises not in v2
+## ------------------------------------------ ##
+# AE2426; EN727; AR88; AR92; AR95; AR99
+bongolog <- read_csv(here("data", "raw","nes-lter-bongologs-AR99-20260810.csv"))
+
+new_cruises <- c("AE2426","EN727","AR88","AR92","AR95","AR99")
+
+# elog: pivot deploy/recover to wide, strip B/R prefix to match bongolog cast
+elog_wide <- zoop_tows |>
+  filter(cruise %in% new_cruises, action %in% c("deploy","recover")) |>
+  filter(!str_starts(cast, "R")) |>          # drop ring casts
+  mutate(cast = str_remove(cast, "^B")) |>
+  select(cruise, station, cast, action, datetime8601) |>
+  pivot_wider(names_from = action, values_from = datetime8601,
+              names_glue = "elog_{action}")
+
+# join to bongolog (already one row per tow) and diff
+compare <- bongolog |>
+  filter(cruise %in% new_cruises) |>
+  select(cruise, station, cast,
+         log_deploy  = datetime_UTC_start,
+         log_recover = datetime_UTC_end) |>
+  left_join(elog_wide, by = c("cruise","station","cast")) |>
+  mutate(
+    deploy_diff_min  = as.numeric(difftime(log_deploy,  elog_deploy,  units="mins")),
+    recover_diff_min = as.numeric(difftime(log_recover, elog_recover, units="mins"))
+  )
+
+compare |>
+  select(cruise, station, cast,
+         log_deploy, elog_deploy, deploy_diff_min,
+         log_recover, elog_recover, recover_diff_min) |>
+  arrange(desc(abs(deploy_diff_min))) |>
+  print(n = Inf, width = Inf)
+
+## tdr QA/QC
+tdr <- read_csv(here("data", "raw","nes-lter-bongo-tdr.csv"))
+
+tdr_times <- tdr |>
+  filter(cruise %in% new_cruises,
+         !str_starts(cast, "R")) |>           
+  group_by(cruise, station, cast) |>
+  arrange(date_time_utc, .by_group = TRUE) |>
+  mutate(ref = 0.6 * max(depth_m, na.rm = TRUE)) |>
+  summarise(
+    max_depth  = max(depth_m, na.rm = TRUE),
+    cross_down = { hit <- depth_m > ref & row_number() <= which.max(depth_m)
+    if (any(hit)) date_time_utc[which(hit)[1]] else as.POSIXct(NA) },
+    cross_up   = { hit <- depth_m > ref & row_number() >= which.max(depth_m)
+    if (any(hit)) date_time_utc[max(which(hit))] else as.POSIXct(NA) },
+    .groups = "drop"
+  ) |>
+  mutate(cast = str_remove(cast, "^B"))
+
+# TDR crossing times (from your tdr_times object)
+tdr_src <- tdr_times |>
+  select(cruise, station, cast, tdr_deploy = cross_down, tdr_recover = cross_up)
+
+# elog wide (bongo only)
+elog_src <- zoop_tows |>
+  filter(cruise %in% new_cruises, action %in% c("deploy","recover"),
+         !str_starts(cast, "R")) |>
+  mutate(cast = str_remove(cast, "^B")) |>
+  select(cruise, station, cast, action, datetime8601) |>
+  pivot_wider(names_from = action, values_from = datetime8601,
+              names_glue = "elog_{action}")
+
+# bongolog times
+log_src <- bongolog |>
+  filter(cruise %in% new_cruises) |>
+  select(cruise, station, cast,
+         log_deploy = datetime_UTC_start, log_recover = datetime_UTC_end)
+
+# join all three, compute the TDR-vs-elog offsets
+all3 <- tdr_src |>
+  left_join(elog_src, by = c("cruise","station","cast")) |>
+  left_join(log_src,  by = c("cruise","station","cast")) |>
+  mutate(
+    deploy_lag_min   = as.numeric(difftime(tdr_deploy, elog_deploy, units="mins")),
+    recover_lead_min = as.numeric(difftime(elog_recover, tdr_recover, units="mins"))
+  )
+
+# --- flag anything >= 10 min on either end, print all three sources ---
+all3 |>
+  filter(abs(deploy_lag_min) >= 10 | abs(recover_lead_min) >= 10) |>
+  select(cruise, station, cast,
+         elog_deploy, log_deploy, tdr_deploy, deploy_lag_min,
+         elog_recover, log_recover, tdr_recover, recover_lead_min) |>
+  arrange(desc(abs(deploy_lag_min))) |>
+  print(n = Inf, width = Inf)
+
+## ------------------------------------------ ##
+#   8. Add date columns
 ## ------------------------------------------ ##
 
 zoop_tows <- zoop_tows |>

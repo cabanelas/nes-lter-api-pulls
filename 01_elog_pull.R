@@ -29,6 +29,13 @@
 ##   - elog_zoop_tows_[datecreated].csv
 ################################################################################
 
+# =============================================================================
+# ***  To - DO next  ***
+# -----------------------------------------------------------------------------
+# revisit AR38 coordinates patching may be wrong... 
+# add hrs2601, hrs2609
+# =============================================================================
+
 library(tidyverse)
 library(janitor)
 library(here)
@@ -335,6 +342,9 @@ zoop_tows |>
 ## --- fix AR38 L6 coordinates ---
 # these are also wrong in the meta doc
 # patching using the CTD coordinates in the elog
+
+## I ACTUALLY THINK THESE MAY BE WRNG AS WELL --- need to revist and check 
+## L6 usually around 40.36333333	70.88333333
 ar38_l6 <- combined_data |>
   filter(cruise == "AR38", Station == "L6", Cast == "8",
          Instrument == "CTD911", Action == "deploy") 

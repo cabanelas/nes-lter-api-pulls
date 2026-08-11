@@ -34,6 +34,7 @@
 # -----------------------------------------------------------------------------
 # revisit AR38 coordinates patching may be wrong... 
 # add hrs2601, hrs2609
+# add column to keep track whether values were edited/fixed/etc...
 # =============================================================================
 
 library(tidyverse)

@@ -5,7 +5,7 @@
 ## Purpose: Pull bongo/ring net event logs from NES-LTER API v2
 ##          and combine with manually downloaded R2R elogs
 ##
-##   Last time saved up to cruise HRS2601 (spring 2026)
+##   Last time saved up to cruise HRS2609 (summer 2026)
 ##
 ## API2 (new):
 ##    https://github.com/WHOIGit/nes-lter-api-2/wiki
@@ -16,12 +16,15 @@
 ##    https://www.rvdata.us/
 ##    https://github.com/WHOIGit/nes-lter-ims/wiki/Using-REST-API-to-access-NES-LTER-data
 ##
+##  AR99, HRS2601, HRS2609 have separate elog entries for ring net
+##
 ## Inputs (data/raw/):
 ##   - nes-lter-zooplankton-tow-metadata-v2.csv (EDI inventory knb-lter-nes.24.2)
 ##    https://portal.edirepository.org/nis/mapbrowse?packageid=knb-lter-nes.24.2
+##    has up to EN720
 ##
 ##   - nes-lter-bongologs-AR99-20260810.csv
-##      from nes-lter-tow-meta-v3.Rproj; 01_merge_bongo_logs.R
+##      from nes-lter-tow-meta-v3.Rproj; 03_bongo_logs_merge.R
 ##
 ##   - nes-lter-bongo-tdr.csv         from nes-lter-tdr-bongo.Rproj
 ##
@@ -32,8 +35,9 @@
 # =============================================================================
 # ***  To - DO next  ***
 # -----------------------------------------------------------------------------
-# add hrs2601, hrs2609
+# add ar105
 # add column to keep track whether values were edited/fixed/etc...
+# add updated nes-lter-bongo-tdr.csv
 # =============================================================================
 
 library(tidyverse)
@@ -131,8 +135,7 @@ read_r2r <- function(filename, cruise_id) {
 }
 
 r2r_manual <- bind_rows(
-  read_r2r("R2R_ELOG_AR66B.csv", "AR66B")#,
-  # read_r2r("R2R_ELOG_en720.csv", "EN720")
+  read_r2r("R2R_ELOG_AR66B.csv", "AR66B")
 )
 
 # names(combined_data); names(r2r_manual)
@@ -152,10 +155,10 @@ unique(combined_data$cruise)
 #AR48A,AR48B,AR61A,AR70B,AR75,AR78,AR82A,AR87A
 
 zoop_tows <- combined_data |>
-  filter(Instrument %in% c("Bongo Net", "Bongo", "Ring Net", "RingNet")) |>
+  filter(Instrument %in% c("Bongo Net", "Bongo", "Ring Net", "RingNet", "Ring net")) |>
   filter(cruise != "AR87B") # OOI cruise; https://www.rvdata.us/search/cruise/AR87B
 
-unique(zoop_tows$Instrument) # seems like the discrepancies might have been fixed
+unique(zoop_tows$Instrument)
 unique(zoop_tows$Station)
 unique(zoop_tows$Cast)
 
@@ -196,7 +199,7 @@ zoop_tows <- zoop_tows |>
 
 unique(zoop_tows$Instrument)
 unique(zoop_tows$Action)
-unique(zoop_tows$Station)
+sort(unique(zoop_tows$Station))
 unique(zoop_tows$Cast)
 
 zoop_tows |>
@@ -261,7 +264,7 @@ zoop_tows <- zoop_tows |>
   ))
 
 # --- remove rows ---
-## 13 rows should be deleted
+## 15 rows should be deleted
 zoop_tows <- zoop_tows |>
   filter(
     # AR31A L6 R1 has 2 deploy; remove 1 ; remove the later one (keep earlier one)
@@ -284,7 +287,9 @@ zoop_tows <- zoop_tows |>
     # empty entry? i think this may be a typo; no missing stations this cruise
     !(cruise == "AR38" & is.na(station) & is.na(cast)),
     # remove == cast == Test 
-    !(cast == "Test" & !is.na(cast))
+    !(cast == "Test" & !is.na(cast)),
+    # HRS2601 L1 - cast NA, failed cast redone later
+    !(cruise == "HRS2601" & station == "L1" & is.na(cast)),
   )
 
 ## check NAs
@@ -300,7 +305,7 @@ walk(c("instrument", "action", "station", "cast"), function(col) {
 #   6. Patch coordinates and timestamps from meta
 ## ------------------------------------------ ##
 ## --- EDI zooplankton inventory package --- 
-# knb-lter-nes.24.2
+# knb-lter-nes.24.2 : has up to EN720
 # https://portal.edirepository.org/nis/mapbrowse?packageid=knb-lter-nes.24.2
 meta <- read_csv(file.path("data",
                            "raw",
@@ -423,6 +428,7 @@ cat("remaining NA longitude:", sum(is.na(zoop_tows$longitude)), "\n")
 # cant fix coordinates; CTD cast doesnt have lat/lon either
 
 # --- final manual timestamp overrides (authoritative; after meta-patch) ---
+## !!! so do these all have "bad" coords???? -- check later
 zoop_tows <- zoop_tows |>
   mutate(datetime8601 = case_when(
     cruise=="AR28B"   & station=="L1"   & cast=="R1"  & 
@@ -443,6 +449,21 @@ zoop_tows <- zoop_tows |>
     # EN706 L8 B15 recover -> 01:00
     cruise=="EN706"   & station=="L8"   & cast=="B15" & 
       action=="recover" ~ as.POSIXct("2023-08-11 01:00:00", tz="UTC"),
+    # HRS2609 L3 recover -> 01:34
+    cruise=="HRS2609"   & station=="L3"   & cast=="B37" & 
+      action=="recover" ~ as.POSIXct("2026-08-19 01:34:00", tz="UTC"),
+    # HRS2609 L6 B10 deploy -> 22:07 
+    cruise=="HRS2609"   & station=="L6"   & cast=="B10" & 
+      action=="deploy" ~ as.POSIXct("2026-08-16 22:07:00", tz="UTC"),
+    # HRS2609 L6 R10 recover -> 22:43  
+    cruise=="HRS2609"   & station=="L6"   & cast=="R10" & 
+      action=="recover" ~ as.POSIXct("2026-08-16 22:43:00", tz="UTC"),
+    # HRS2609 MVCO B41 deploy -> 2026-08-19 11:29:01
+    cruise=="HRS2609"   & station=="MVCO"   & cast=="B41" & 
+      action=="deploy" ~ as.POSIXct("2026-08-19 11:29:01", tz="UTC"),
+    # HRS2609 MVCO B41 recover -> 2026-08-19 11:34:00
+    cruise=="HRS2609"   & station=="MVCO"   & cast=="B41" & 
+      action=="recover" ~ as.POSIXct("2026-08-19 11:34:00", tz="UTC"),
     TRUE ~ datetime8601
   ))
 
@@ -452,7 +473,8 @@ zoop_tows <- zoop_tows |>
 # AE2426; EN727; AR88; AR92; AR95; AR99
 bongolog <- read_csv(here("data", "raw","nes-lter-bongologs-AR99-20260810.csv"))
 
-new_cruises <- c("AE2426","EN727","AR88","AR92","AR95","AR99")
+new_cruises <- c("AE2426","EN727","AR88","AR92","AR95","AR99") 
+# need to add HRS2601 and HRS2609
 
 # elog: pivot deploy/recover to wide, strip B/R prefix to match bongolog cast
 elog_wide <- zoop_tows |>
@@ -579,6 +601,3 @@ most_recent <- zoop_tows |>
 write_csv(zoop_tows, here("data", "processed",
                           paste0("elog_zoop_tows_thru", most_recent, 
                                  "_", Sys.Date(), ".csv")))
-
-# write_csv(zoop_tows, here("data", "processed",
-#                           paste0("elog_zoop_tows_", Sys.Date(), ".csv")))

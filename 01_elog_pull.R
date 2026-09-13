@@ -53,7 +53,7 @@ BASE_URL <- "https://nes-lter-api.whoi.edu/api"
 cruises_df <- read_csv(paste0(BASE_URL, "/ctd/cruises/all.csv"),
                        show_col_types = FALSE)
 
-cruise_ids <- toupper(cruises_df$name)  # col is called 'name' per notebook
+cruise_ids <- toupper(cruises_df$name)
 
 ## ------------------------------------------ ##
 #   2. Pull event logs via API

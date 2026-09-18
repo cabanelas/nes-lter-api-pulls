@@ -23,10 +23,10 @@
 ##    https://portal.edirepository.org/nis/mapbrowse?packageid=knb-lter-nes.24.2
 ##    has up to EN720
 ##
-##   - nes-lter-bongologs-AR99-20260810.csv
+##  !!!!!UPDATE - nes-lter-bongologs-AR99-20260810.csv; now its an intermediate rds
 ##      from nes-lter-tow-meta-v3.Rproj; 03_bongo_logs_merge.R
 ##
-##   - nes-lter-bongo-tdr.csv         from nes-lter-tdr-bongo.Rproj
+##  !!!!!UPDATE  - nes-lter-bongo-tdr.csv         from nes-lter-tdr-bongo.Rproj
 ##
 ## Outputs (data/raw/):
 ##   - elog_zoop_tows_[datecreated].csv
@@ -449,6 +449,11 @@ zoop_tows <- zoop_tows |>
     # EN706 L8 B15 recover -> 01:00
     cruise=="EN706"   & station=="L8"   & cast=="B15" & 
       action=="recover" ~ as.POSIXct("2023-08-11 01:00:00", tz="UTC"),
+    # HRS2601 MVCO B20 05:57-06:04
+    cruise=="HRS2601"   & station=="MVCO"   & cast=="B20" & 
+      action=="deploy" ~ as.POSIXct("2026-04-27 05:57:00", tz="UTC"),
+    cruise=="HRS2601"   & station=="MVCO"   & cast=="B20" & 
+      action=="recover" ~ as.POSIXct("2026-04-27 06:04:00", tz="UTC"),
     # HRS2609 L3 recover -> 01:34
     cruise=="HRS2609"   & station=="L3"   & cast=="B37" & 
       action=="recover" ~ as.POSIXct("2026-08-19 01:34:00", tz="UTC"),

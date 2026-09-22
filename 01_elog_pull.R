@@ -22,11 +22,10 @@
 ##   - nes-lter-zooplankton-tow-metadata-v2.csv (EDI inventory knb-lter-nes.24.2)
 ##    https://portal.edirepository.org/nis/mapbrowse?packageid=knb-lter-nes.24.2
 ##    has up to EN720
-##
-##  !!!!!UPDATE - nes-lter-bongologs-AR99-20260810.csv; now its an intermediate rds
-##      from nes-lter-tow-meta-v3.Rproj; 03_bongo_logs_merge.R
-##
-##  !!!!!UPDATE  - nes-lter-bongo-tdr.csv         from nes-lter-tdr-bongo.Rproj
+##   - tow-meta-v3-intermediate-HRS2609-20260918.rds
+##       (previously named nes-lter-bongologs-CRUISE-YYYYMMDD.csv)
+##       from nes-lter-tow-meta-v3.Rproj; 03_bongo_logs_merge.R
+##   - nes-lter-bongo-tdr.csv         from nes-lter-tdr-bongo.Rproj
 ##
 ## Outputs (data/raw/):
 ##   - elog_zoop_tows_[datecreated].csv

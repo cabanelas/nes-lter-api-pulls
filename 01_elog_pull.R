@@ -36,7 +36,6 @@
 # -----------------------------------------------------------------------------
 # add ar105
 # add column to keep track whether values were edited/fixed/etc...
-# add updated nes-lter-bongo-tdr.csv
 # =============================================================================
 
 library(tidyverse)
